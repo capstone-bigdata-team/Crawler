@@ -3,6 +3,9 @@ import fitz  # PyMuPDF
 import olefile
 import zlib
 import re
+import zipfile
+import xml.etree.ElementTree as ET
+from docx import Document
 from src.utils.logger import get_logger
 
 logger = get_logger("FileExtractor")
@@ -23,24 +26,54 @@ class FileExtractor:
             return None
 
     @staticmethod
+    def extract_text_from_docx(file_path):
+        """DOCX 파일에서 텍스트 추출"""
+        try:
+            doc = Document(file_path)
+            full_text = []
+            for para in doc.paragraphs:
+                full_text.append(para.text)
+            return "\n".join(full_text).strip()
+        except Exception as e:
+            logger.error(f"Error extracting DOCX: {e}")
+            return None
+
+    @staticmethod
+    def extract_text_from_hwpx(file_path):
+        """HWPX 파일(ZIP)에서 텍스트 추출"""
+        try:
+            text = []
+            with zipfile.ZipFile(file_path, 'r') as z:
+                # Contents/section0.xml, section1.xml ... 에 본문이 들어있음
+                sections = [f for f in z.namelist() if f.startswith('Contents/section') and f.endswith('.xml')]
+                for section in sorted(sections):
+                    with z.open(section) as f:
+                        tree = ET.parse(f)
+                        root = tree.getroot()
+                        # hp:t 태그 스트링 추출 (네임스페이스 무시하고 간단히 찾기)
+                        for elem in root.iter():
+                            if elem.tag.endswith('}t') and elem.text:
+                                text.append(elem.text)
+            return "\n".join(text).strip()
+        except Exception as e:
+            logger.error(f"Error extracting HWPX: {e}")
+            return None
+
+    @staticmethod
     def extract_text_from_hwp(file_path):
-        """HWP 파일에서 PrvText 스트림 추출 (가장 간단한 텍스트 추출 방식)"""
+        """HWP 파일에서 PrvText 스트림 추출"""
         try:
             if not olefile.isOleFile(file_path):
                 return None
                 
             ole = olefile.OleFileIO(file_path)
-            # HWP5 기준 PrvText 스트림에 텍스트 요약이 들어있는 경우가 많음
             if ole.exists('PrvText'):
                 data = ole.openstream('PrvText').read()
-                # UTF-16LE 인코딩된 경우가 많음
                 text = data.decode('utf-16-le', errors='ignore')
-                # 제어 문자 및 불필요한 태그 제거
                 text = re.sub(r'<.+?>', '', text)
+                ole.close()
                 return text.strip()
             
-            # PrvText가 없는 경우 BodyText 섹션들을 순회하며 추출해야 함 (복잡)
-            # 여기선 기본적으로 PrvText를 시도하고 실패 시 로그
             ole.close()
             return None
         except Exception as e:
@@ -56,6 +89,10 @@ class FileExtractor:
         ext = os.path.splitext(file_path)[1].lower()
         if ext == '.pdf':
             return cls.extract_text_from_pdf(file_path)
+        elif ext == '.docx':
+            return cls.extract_text_from_docx(file_path)
+        elif ext == '.hwpx':
+            return cls.extract_text_from_hwpx(file_path)
         elif ext == '.hwp':
             return cls.extract_text_from_hwp(file_path)
         else:

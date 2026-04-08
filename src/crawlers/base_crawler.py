@@ -2,7 +2,9 @@ import re
 from datetime import datetime
 from bs4 import BeautifulSoup
 import requests
+import os
 from src.utils.logger import get_logger
+from src.utils.file_extractor import FileExtractor
 
 class BaseCrawler:
     def __init__(self, source_name):
@@ -37,16 +39,29 @@ class BaseCrawler:
         if not raw_date:
             return None
             
-        # 숫자만 추출 (예: 2026.03.18, 2026/03/18, 2026-03-18, 26.03.18)
+        # 숫자만 추출 (예: 2026.03.18, 03.18, 04.07 17:05)
         nums = re.findall(r'\d+', str(raw_date))
         
         if len(nums) >= 3:
+            # 4개 이상의 숫자가 있고 첫 번째가 1~12인 경우 (예: 04.07 17:05)
+            # MM.DD HH:mm 형식으로 간주
+            if len(nums) >= 4 and int(nums[0]) <= 12 and int(nums[1]) <= 31:
+                month, day = nums[0], nums[1]
+                year = datetime.now().year
+                return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+                
             year, month, day = nums[0], nums[1], nums[2]
-            
             # 연도가 2자리인 경우 (예: 26 -> 2026)
             if len(year) == 2:
                 year = "20" + year
-                
+            try:
+                return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+            except (ValueError, TypeError):
+                return None
+        elif len(nums) == 2:
+            # 월, 일만 있는 경우 (예: 03.18) -> 현재 연도 사용
+            month, day = nums[0], nums[1]
+            year = datetime.now().year
             try:
                 return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
             except (ValueError, TypeError):
@@ -54,7 +69,7 @@ class BaseCrawler:
         
         return None
 
-    def make_unified_data(self, title, date, content, url, doc_id=None, company=None, summary=None, department=None, author=None, image_urls=None, attachments=None, hashtags=None, references=None):
+    def make_unified_data(self, title, date, content, url, doc_id=None, company=None, summary=None, department=None, author=None, image_urls=None, attachments=None, hashtags=None, references=None, attachment_text=None):
         """통합 JSON 규격 v1으로 데이터 변환"""
         formatted_date = self.format_date(date)
         
@@ -76,6 +91,7 @@ class BaseCrawler:
             "date": formatted_date,
             "summary": self.clean_text(summary) if summary else None,
             "content_text": self.clean_text(content) if content else None,
+            "attachment_text": attachment_text, # 첨부파일에서 추출한 텍스트
             "detail_url": url,
             "image_urls": image_urls if image_urls else [],
             "attachments": attachments if attachments else [],
@@ -93,3 +109,63 @@ class BaseCrawler:
         except Exception as e:
             self.logger.error(f"Error fetching {url}: {e}")
             return None
+
+    def download_file(self, url, save_path):
+        """파일 다운로드 함수"""
+        try:
+            response = self.session.get(url, stream=True, timeout=30)
+            response.raise_for_status()
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            with open(save_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to download file from {url}: {e}")
+            return False
+
+    def process_attachments(self, attachments):
+        """첨부파일 리스트 중 최적의 파일 하나를 선택하여 텍스트 추출"""
+        if not attachments:
+            return None
+            
+        # 우선순위 정의: PDF > DOCX > HWPX > HWP
+        priority = {'.pdf': 1, '.docx': 2, '.hwpx': 3, '.hwp': 4}
+        
+        # 확장자별로 분류 및 정렬
+        valid_attachments = []
+        for att in attachments:
+            url = att.get('download_url')
+            name = att.get('file_name', '')
+            ext = os.path.splitext(name)[1].lower()
+            if not ext and url:
+                ext = os.path.splitext(url.split('?')[0])[1].lower()
+            
+            p = priority.get(ext, 99)
+            valid_attachments.append((p, att, ext))
+            
+        if not valid_attachments:
+            return None
+            
+        # 가장 높은 우선순위 파일 선택
+        valid_attachments.sort(key=lambda x: x[0])
+        best_p, best_att, best_ext = valid_attachments[0]
+        
+        if best_p == 99:
+            self.logger.warning(f"No supported attachment types found among {len(attachments)} files")
+            return None
+
+        # 다운로드 및 추출
+        download_url = best_att.get('download_url')
+        temp_path = f"tmp_download_{self.source_name}_{hash(download_url)}{best_ext}"
+        
+        extracted_text = None
+        if self.download_file(download_url, temp_path):
+            self.logger.info(f"Extracting text from {best_att.get('file_name')} ({best_ext})")
+            extracted_text = FileExtractor.extract(temp_path)
+            
+            # 파일 삭제
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+        return extracted_text

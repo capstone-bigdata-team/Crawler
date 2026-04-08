@@ -54,12 +54,16 @@ class KccCrawler(BaseCrawler):
                 if not detail_data:
                     continue
                 
+                # 상세 데이터 기반으로 첨부파일 텍스트 추출 (가장 적적한 파일 하나 선택)
+                attachment_text = self.process_attachments(detail_data.get('attachments', []))
+                
                 unified_data = self.make_unified_data(
                     title=title,
                     date=raw_date,
                     content=detail_data['content'],
                     url=detail_url,
                     attachments=detail_data.get('attachments', []),
+                    attachment_text=attachment_text,
                     department=detail_data.get('department'),
                     author=detail_data.get('author')
                 )
@@ -88,37 +92,49 @@ class KccCrawler(BaseCrawler):
             content_elem = soup.select_one('#contents') or soup.body
             
         # 첨부파일 추출
-        attachments = []
+        attachments_dict = {}
         # KCC는 보통 'file_list' 또는 특정 클래스 내에 i 태그와 a 태그가 있음
         file_links = soup.select('a[onclick*="fileDownload"], a[href*="fileDownload"], a.file_download')
         
         for link in file_links:
             onclick = link.get('onclick', '')
-            # 예: fileDownload('12345', 'file_name.hwp')
-            file_match = re.search(r"fileDownload\('(\d+)',\s*'(.+?)'\)", onclick)
+            href = link.get('href', '')
+            text = link.get_text(strip=True)
             
+            # download_url 결정
+            download_url = None
+            
+            # jsessionid 및 쿼리 파라미터 정규화 (dedup용)
+            clean_href = re.sub(r';jsessionid=[a-zA-Z0-9.-]+', '', href)
+            
+            file_match = re.search(r"fileDownload\('(\d+)',\s*'(.+?)'\)", onclick)
             if file_match:
                 file_id = file_match.group(1)
                 file_name = file_match.group(2)
-                # 실제 다운로드 URL 구성 (KCC 패턴에 따름)
                 download_url = f"{self.domain}/fileDownload.do?fileId={file_id}"
+            elif 'download.do' in clean_href or 'download' in clean_href.lower():
+                download_url = urllib.parse.urljoin(self.domain, clean_href)
+                # URL에서 파일명을 추출하려 시도하거나 텍스트 사용
+                file_name = text
+            elif clean_href and any(ext in clean_href.lower() for ext in ['.hwp', '.pdf', '.hwpx', '.docx']):
+                download_url = urllib.parse.urljoin(self.domain, clean_href)
+                file_name = text
+            
+            if download_url:
+                # URL에서 jsessionid를 제거한 버전을 키로 사용
+                dedup_key = re.sub(r';jsessionid=[a-zA-Z0-9.-]+', '', download_url)
                 
-                attachments.append({
-                    "file_name": file_name,
-                    "download_url": download_url,
-                    "extracted_text": None # 추후 모듈에서 처리
-                })
-            else:
-                # 일반 href 기반 다운로드
-                href = link.get('href', '')
-                if href and ('download' in href.lower() or '.hwp' in href.lower() or '.pdf' in href.lower()):
-                    file_name = link.get_text(strip=True) or "attachment"
-                    download_url = urllib.parse.urljoin(self.domain, href)
-                    attachments.append({
-                        "file_name": file_name,
+                # 같은 URL이 이미 있으면, 이름에 확장자가 포함된 것을 우선 채택
+                has_ext = any(file_name.lower().endswith(e) for e in ['.hwp', '.pdf', '.hwpx', '.docx'])
+                
+                if dedup_key not in attachments_dict or (not any(attachments_dict[dedup_key]['file_name'].lower().endswith(e) for e in ['.hwp', '.pdf', '.hwpx', '.docx']) and has_ext):
+                    attachments_dict[dedup_key] = {
+                        "file_name": file_name if file_name else "attachment",
                         "download_url": download_url,
                         "extracted_text": None
-                    })
+                    }
+        
+        attachments = list(attachments_dict.values())
         
         # 담당부서, 작성자 추출 (보통 th-td 또는 dt-dd 구조)
         department = None

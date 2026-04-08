@@ -57,6 +57,9 @@ class NspCrawler(BaseCrawler):
                 hashtags_str = item.get('hashtag', '')
                 hashtag_list = [t.strip() for t in hashtags_str.split(',') if t.strip()] if hashtags_str else []
                 
+                # 첨부파일 텍스트 추출 (주로 PDF)
+                attachment_text = self.process_attachments(detail_data.get('attachments', [])) if detail_data else None
+                
                 unified_data = self.make_unified_data(
                     title=title,
                     date=publish_date,
@@ -66,7 +69,8 @@ class NspCrawler(BaseCrawler):
                     summary=hashtags_str if hashtags_str else None,
                     hashtags=hashtag_list,
                     references=[],
-                    attachments=detail_data.get('attachments', []) if detail_data else []
+                    attachments=detail_data.get('attachments', []) if detail_data else [],
+                    attachment_text=attachment_text
                 )
 
                 results.append(unified_data)
@@ -93,13 +97,22 @@ class NspCrawler(BaseCrawler):
 
         # 첨부파일 (NSP 상세 페이지 하단에 다운로드 버튼 등 존재)
         attachments = []
-        # NSP는 보통 PDF 다운로드 링크가 명시적임
-        file_links = soup.select('a[href*="fileDownload"], a[href*=".pdf"]')
+        # NSP는 보통 PDF 다운로드 링크가 명시적임, 또는 '참고자료' 섹션에 존재
+        file_links = soup.select('a[href*="fileDownload"], a[href*=".pdf"], a[href*="AttachFileDown"], ul.ref_list_area a.data')
+        
+        # 중복 방지를 위한 셋(Set)
+        seen_urls = set()
+        
         for link in file_links:
             href = link.get('href', '')
             if href:
                 full_url = urllib.parse.urljoin(url, href)
-                name = link.get_text(strip=True) or "Download PDF"
+                if full_url in seen_urls:
+                    continue
+                seen_urls.add(full_url)
+                
+                name = link.get_text(strip=True) or "Download"
+                # 외부 링크인지 내부 다운로드인지 판별하여 이름 보강 (필요 시)
                 attachments.append({
                     "file_name": name,
                     "download_url": full_url,
