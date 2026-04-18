@@ -58,10 +58,26 @@ class BaseCrawler:
         """기본 텍스트 정제"""
         if not text:
             return ""
+        
         if hasattr(text, 'get_text'):
+            # 본문 추출 전 불필요한 요소 제거 (BS4 전용)
+            trash_tags = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'form', 'button']
+            for tag in trash_tags:
+                for match in text.find_all(tag):
+                    match.decompose()
+            
+            # 특정 클래스/아이디 기반의 상용구 영역 제거 (필요 시 확장 가능)
+            trash_selectors = ['.nav', '.footer', '.header', '.sidebar', '.ad', '#nav', '#footer']
+            for selector in trash_selectors:
+                for match in text.select(selector):
+                    match.decompose()
+
             text = text.get_text(separator=' ', strip=True)
+            
         # 불필요한 공백 제거
         text = re.sub(r'\s+', ' ', str(text)).strip()
+        # 특수 문자가 연달아 나오는 경우 정리 (선택적)
+        text = re.sub(r'\n+', '\n', text)
         return text
 
     def make_unified_data(self, title, date, content, url, attachments=None, attachment_text=None, 

@@ -21,7 +21,7 @@ def run_all_crawlers():
     for crawler in crawlers:
         try:
             logger.info(f"--- Starting {crawler.__class__.__name__} ---")
-            results = crawler.crawl(limit=3) # 3개씩 수집
+            results = crawler.crawl(limit=5) # 5개씩 수집
             all_results.extend(results)
             logger.info(f"Collected {len(results)} items from {crawler.source_name}")
         except Exception as e:

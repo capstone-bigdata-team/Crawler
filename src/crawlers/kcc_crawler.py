@@ -84,12 +84,12 @@ class KccCrawler(BaseCrawler):
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # KCC 상세 페이지 본문 영역 (보통 table 내 view_content 등)
-        content_elem = soup.select_one('.view_content') or soup.find('td', class_='view_content')
+        # KCC 상세 페이지 본문 영역 (정밀 선택자 적용)
+        content_elem = soup.select_one('td.table_con') or soup.select_one('.view_content') or soup.find('td', class_='view_content')
         
         if not content_elem:
-            # 본문 영역을 못 찾으면 모든 텍스트라도 가져오기 (전략적 대체)
-            content_elem = soup.select_one('#contents') or soup.body
+            # 본문 영역을 못 찾으면 보조 선택자 시도
+            content_elem = soup.select_one('.view_cont') or soup.select_one('#contents')
             
         # 첨부파일 추출
         attachments_dict = {}
