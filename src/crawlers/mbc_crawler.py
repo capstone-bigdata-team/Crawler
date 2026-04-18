@@ -90,12 +90,25 @@ class MbcCrawler(BaseCrawler):
             
         soup = BeautifulSoup(content_html, 'html.parser')
         
-        # 이미지 추출 (상세 API 본문에 포함됨)
         images = []
+        # 1. API의 'file' 리스트에서 이미지 추출 (가장 확실함)
+        file_list = data.get('file', [])
+        for f in file_list:
+            if f.get('iskind') == 'P': # Photo/Image 자료형
+                file_path = f.get('file_fullpath')
+                if file_path:
+                    # MBC 이미지 서버 베이스 경로와 결합
+                    full_url = self.normalize_url(file_path, "https://mbcinfo.imbc.com/data/")
+                    if full_url not in images:
+                        images.append(full_url)
+        
+        # 2. 혹시 본문 HTML 내에도 <img> 태그가 있다면 추출 (보조)
         for img in soup.select('img'):
             img_src = img.get('src')
             if img_src:
-                images.append(urllib.parse.urljoin("https://mbcinfo.imbc.com", img_src))
+                full_url = self.normalize_url(img_src, "https://mbcinfo.imbc.com")
+                if full_url not in images:
+                    images.append(full_url)
         
         return {
             "content": soup,

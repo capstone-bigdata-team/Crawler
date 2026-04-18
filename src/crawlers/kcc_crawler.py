@@ -47,7 +47,7 @@ class KccCrawler(BaseCrawler):
                     detail_url = f"{self.domain}/user.do?boardId=1113&page=A05030000&boardSeq={seq}&boardMode=view"
                 else:
                     href = title_elem.get('href', '')
-                    detail_url = urllib.parse.urljoin(self.base_url, href)
+                    detail_url = self.normalize_url(href, self.base_url)
 
                 # 상세 페이지 파싱
                 detail_data = self.parse_detail(detail_url)
@@ -114,10 +114,10 @@ class KccCrawler(BaseCrawler):
                 file_name = file_match.group(2)
                 download_url = f"{self.domain}/fileDownload.do?fileId={file_id}"
             elif 'download.do' in clean_href or 'download' in clean_href.lower():
-                download_url = urllib.parse.urljoin(self.domain, clean_href)
+                download_url = self.normalize_url(clean_href, self.domain)
                 file_name = text
             elif clean_href and any(ext in clean_href.lower() for ext in ['.hwp', '.pdf', '.hwpx', '.docx']):
-                download_url = urllib.parse.urljoin(self.domain, clean_href)
+                download_url = self.normalize_url(clean_href, self.domain)
                 file_name = text
             
             if download_url:

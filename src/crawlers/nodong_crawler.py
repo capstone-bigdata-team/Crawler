@@ -16,34 +16,41 @@ class NodongCrawler(BaseCrawler):
             return []
 
         soup = BeautifulSoup(response.text, 'html.parser')
-        # 언론노조 목록 아이템 추출 (셀렉터 보강)
-        titles = soup.select('h4.titles')
-        items = [t.find_parent('li') or t.find_parent('div') for t in titles if t.find_parent()]
-        
-        if not items:
-            items = soup.select('ul.article-list li') or soup.select('div.list-block')
+        # 리스트 영역 정확한 선택자로 교정 (#section-list ul li)
+        items = soup.select('#section-list ul li')
         
         results = []
-        for item in items[:limit]:
-            try:
-                title_elem = item.select_one('h4.titles a')
-                summary_elem = item.select_one('p.lead a')
+        for item in items:
+            if len(results) >= limit:
+                break
                 
+            try:
+                category_elem = item.select_one('.info.category')
+                category = category_elem.get_text(strip=True) if category_elem else ""
+                
+                # S2N14 리스트 내에서도 '보도자료' 카테고리가 명시된 것만 수집 (성명, 미디어위키 등 제외)
+                # 만약 '성명'도 포함하고 싶다면 아래 조건을 조정해야 함
+                if "보도자료" not in category:
+                    continue
+                
+                title_elem = item.select_one('.titles a')
                 if not title_elem:
                     continue
                 
                 title = title_elem.get_text(strip=True)
                 relative_url = title_elem.get('href')
-                detail_url = urllib.parse.urljoin(self.base_url, relative_url)
+                detail_url = self.normalize_url(relative_url, self.base_url)
+                
+                summary_elem = item.select_one('.lead a')
                 summary = summary_elem.get_text(strip=True) if summary_elem else None
                 
-                # 날짜 및 작성자 추출 (신규 셀렉터)
-                author = item.select_one('em.info.name').get_text(strip=True) if item.select_one('em.info.name') else None
-                date_elem = item.select_one('em.info.dated')
+                # 날짜 및 작성자 추출
+                author = item.select_one('.info.name').get_text(strip=True) if item.select_one('.info.name') else None
+                date_elem = item.select_one('.info.dated')
                 raw_date = date_elem.get_text(strip=True) if date_elem else None
                     
-                thumb_elem = item.select_one('a.thumb img')
-                thumbnail_url = urllib.parse.urljoin(self.domain, thumb_elem.get('src')) if thumb_elem else None
+                thumb_elem = item.select_one('.thumb img')
+                thumbnail_url = self.normalize_url(thumb_elem.get('src'), self.domain) if thumb_elem else None
                 image_urls = [thumbnail_url] if thumbnail_url else []
 
                 # 상세 페이지 파싱
@@ -97,7 +104,7 @@ class NodongCrawler(BaseCrawler):
             for img in content_elem.select('img'):
                 img_src = img.get('src')
                 if img_src:
-                    full_image_url = urllib.parse.urljoin(url, img_src)
+                    full_image_url = self.normalize_url(img_src, url)
                     if full_image_url not in image_urls:
                         image_urls.append(full_image_url)
         

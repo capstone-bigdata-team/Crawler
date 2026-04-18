@@ -105,7 +105,7 @@ class NspCrawler(BaseCrawler):
         for link in file_links:
             href = link.get('href', '')
             if href:
-                full_url = urllib.parse.urljoin(url, href)
+                full_url = self.normalize_url(href, url)
                 if full_url in seen_urls:
                     continue
                 seen_urls.add(full_url)
@@ -122,9 +122,10 @@ class NspCrawler(BaseCrawler):
         image_urls = []
         if content_elem:
             for img in content_elem.select('img'):
-                img_src = img.get('src')
+                # src 외에도 data-src 등 지연 로딩 속성 체크
+                img_src = img.get('src') or img.get('data-src') or img.get('original-src')
                 if img_src:
-                    full_image_url = urllib.parse.urljoin(url, img_src)
+                    full_image_url = self.normalize_url(img_src, url)
                     if full_image_url not in image_urls:
                         image_urls.append(full_image_url)
         

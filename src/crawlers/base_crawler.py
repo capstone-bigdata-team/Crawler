@@ -19,6 +19,15 @@ class BaseCrawler:
         })
         self.extractor = FileExtractor()
 
+    def normalize_url(self, url, base_url):
+        """URL을 절대 경로로 변환하고 // 시작 주소 등을 처리"""
+        if not url:
+            return None
+        url = url.strip()
+        if url.startswith('//'):
+            url = 'https:' + url
+        return urllib.parse.urljoin(base_url, url)
+
     def format_date(self, raw_date):
         """다양한 날짜 형식을 YYYY-MM-DD로 변환"""
         if not raw_date:
