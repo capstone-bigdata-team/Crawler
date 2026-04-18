@@ -1,38 +1,23 @@
-import re
-from datetime import datetime
-from bs4 import BeautifulSoup
-import requests
 import os
+import re
+import json
+import hashlib
+import urllib.parse
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime
 from src.utils.logger import get_logger
 from src.utils.file_extractor import FileExtractor
 
 class BaseCrawler:
     def __init__(self, source_name):
         self.source_name = source_name
-        self.logger = get_logger(self.__class__.__name__)
+        self.logger = get_logger(source_name)
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         })
-
-    def clean_text(self, raw_html):
-        """BeautifulSoup으로 태그를 제거하고 순수 텍스트만 추출"""
-        if not raw_html:
-            return None
-        
-        soup = BeautifulSoup(str(raw_html), 'html.parser')
-        
-        # 스크립트, 스타일 태그 제거
-        for script_or_style in soup(["script", "style"]):
-            script_or_style.decompose()
-            
-        text = soup.get_text(separator=' ')
-        # 연속된 공백 및 줄바꿈 정규화
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = '\n'.join(chunk for chunk in chunks if chunk)
-        
-        return text
+        self.extractor = FileExtractor()
 
     def format_date(self, raw_date):
         """다양한 날짜 형식을 YYYY-MM-DD로 변환"""
@@ -69,14 +54,25 @@ class BaseCrawler:
         
         return None
 
-    def make_unified_data(self, title, date, content, url, doc_id=None, company=None, summary=None, department=None, author=None, image_urls=None, attachments=None, hashtags=None, references=None, attachment_text=None):
-        """통합 JSON 규격 v1으로 데이터 변환"""
+    def clean_text(self, text):
+        """기본 텍스트 정제"""
+        if not text:
+            return ""
+        if hasattr(text, 'get_text'):
+            text = text.get_text(separator=' ', strip=True)
+        # 불필요한 공백 제거
+        text = re.sub(r'\s+', ' ', str(text)).strip()
+        return text
+
+    def make_unified_data(self, title, date, content, url, attachments=None, attachment_text=None, 
+                          department=None, author=None, summary=None, image_urls=None, 
+                          hashtags=None, references=None, company=None):
+        """JSON v1 규격에 맞게 데이터 구조화"""
         formatted_date = self.format_date(date)
         
-        # doc_id 자동 생성 (없는 경우)
-        if not doc_id:
-            # 소스_날짜_해시/고유값 (여기선 간단히 url 해시 활용 가능)
-            import hashlib
+        # ID 생성 (원본 URL 해시 + 날짜)
+        doc_id = None
+        if url:
             url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
             clean_date = formatted_date.replace('-', '') if formatted_date else "00000000"
             doc_id = f"{self.source_name.lower()}_{clean_date}_{url_hash}"
@@ -125,7 +121,7 @@ class BaseCrawler:
             return False
 
     def process_attachments(self, attachments):
-        """첨부파일 리스트 중 최적의 파일 하나를 선택하여 텍스트 추출"""
+        """첨부파일 리스트 중 적절한 파일 하나를 선택하여 텍스트 추출 (순차적 시도)"""
         if not attachments:
             return None
             
@@ -136,7 +132,7 @@ class BaseCrawler:
         valid_attachments = []
         for att in attachments:
             url = att.get('download_url')
-            name = att.get('file_name', '')
+            name = att.get('file_name', '').strip()
             ext = os.path.splitext(name)[1].lower()
             if not ext and url:
                 ext = os.path.splitext(url.split('?')[0])[1].lower()
@@ -147,25 +143,35 @@ class BaseCrawler:
         if not valid_attachments:
             return None
             
-        # 가장 높은 우선순위 파일 선택
+        # 가장 높은 우선순위부터 차례대로 시도
         valid_attachments.sort(key=lambda x: x[0])
-        best_p, best_att, best_ext = valid_attachments[0]
         
-        if best_p == 99:
-            self.logger.warning(f"No supported attachment types found among {len(attachments)} files")
-            return None
-
-        # 다운로드 및 추출
-        download_url = best_att.get('download_url')
-        temp_path = f"tmp_download_{self.source_name}_{hash(download_url)}{best_ext}"
-        
-        extracted_text = None
-        if self.download_file(download_url, temp_path):
-            self.logger.info(f"Extracting text from {best_att.get('file_name')} ({best_ext})")
-            extracted_text = FileExtractor.extract(temp_path)
+        for p, att, ext in valid_attachments:
+            if p == 99:
+                continue
             
-            # 파일 삭제
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            download_url = att.get('download_url')
+            file_name = att.get('file_name', 'attachment')
+            # temp 폴더를 명시적으로 지정하여 경로 문제 해결
+            safe_source = self.source_name.replace(" ", "_").lower()
+            temp_path = os.path.join("temp", f"tmp_{safe_source}_{abs(hash(download_url))}{ext}")
+            
+            self.logger.info(f"Attempting extraction from: {file_name} ({ext})")
+            
+            if self.download_file(download_url, temp_path):
+                try:
+                    extracted_text = FileExtractor.extract(temp_path)
+                    if extracted_text and len(extracted_text.strip()) > 10:
+                        self.logger.info(f"Successfully extracted {len(extracted_text)} characters from {file_name}")
+                        return extracted_text
+                    else:
+                        self.logger.warning(f"Extracted text from {file_name} is too short or empty")
+                except Exception as e:
+                    self.logger.error(f"Error during extraction from {file_name}: {e}")
+                finally:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+            else:
+                self.logger.error(f"Failed to download attachment: {file_name}")
         
-        return extracted_text
+        return None

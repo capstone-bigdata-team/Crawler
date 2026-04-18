@@ -94,7 +94,7 @@ class KccCrawler(BaseCrawler):
         # 첨부파일 추출
         attachments_dict = {}
         # KCC는 보통 'file_list' 또는 특정 클래스 내에 i 태그와 a 태그가 있음
-        file_links = soup.select('a[onclick*="fileDownload"], a[href*="fileDownload"], a.file_download')
+        file_links = soup.select('a[onclick*="fileDownload"], a[href*="fileDownload"], a[href*="download.do"], a.file_download')
         
         for link in file_links:
             onclick = link.get('onclick', '')
@@ -104,35 +104,50 @@ class KccCrawler(BaseCrawler):
             # download_url 결정
             download_url = None
             
-            # jsessionid 및 쿼리 파라미터 정규화 (dedup용)
-            clean_href = re.sub(r';jsessionid=[a-zA-Z0-9.-]+', '', href)
+            # jsessionid 제거하여 URL 정규화
+            clean_href = re.sub(r';jsessionid=[^?#]+', '', href)
             
-            file_match = re.search(r"fileDownload\('(\d+)',\s*'(.+?)'\)", onclick)
+            file_match = re.search(r"fileDownload\('(\w+)',\s*'(.+?)'\)", onclick)
             if file_match:
                 file_id = file_match.group(1)
                 file_name = file_match.group(2)
                 download_url = f"{self.domain}/fileDownload.do?fileId={file_id}"
             elif 'download.do' in clean_href or 'download' in clean_href.lower():
                 download_url = urllib.parse.urljoin(self.domain, clean_href)
-                # URL에서 파일명을 추출하려 시도하거나 텍스트 사용
                 file_name = text
             elif clean_href and any(ext in clean_href.lower() for ext in ['.hwp', '.pdf', '.hwpx', '.docx']):
                 download_url = urllib.parse.urljoin(self.domain, clean_href)
                 file_name = text
             
             if download_url:
-                # URL에서 jsessionid를 제거한 버전을 키로 사용
-                dedup_key = re.sub(r';jsessionid=[a-zA-Z0-9.-]+', '', download_url)
+                # URL에서 jsessionid를 제거하고 쿼리 스트링을 정렬하여 키 생성 (결과론적인 데둡)
+                parsed = urllib.parse.urlparse(download_url)
+                params = urllib.parse.parse_qs(parsed.query)
+                # fileSeq 또는 fileId가 있으면 그것을 핵심 키로 사용
+                file_seq = params.get('fileSeq', params.get('fileId', [None]))[0]
+                dedup_key = file_seq if file_seq else re.sub(r';jsessionid=[^?#]+', '', download_url)
                 
-                # 같은 URL이 이미 있으면, 이름에 확장자가 포함된 것을 우선 채택
+                # 파일 확장자 명시 여부 (공백 제거 후 확인)
+                file_name = file_name.strip()
                 has_ext = any(file_name.lower().endswith(e) for e in ['.hwp', '.pdf', '.hwpx', '.docx'])
                 
-                if dedup_key not in attachments_dict or (not any(attachments_dict[dedup_key]['file_name'].lower().endswith(e) for e in ['.hwp', '.pdf', '.hwpx', '.docx']) and has_ext):
+                # '다운로드'나 '보기' 같은 일반적인 텍스트보다 파일명인 것 같은 텍스트를 우선함
+                is_generic = file_name in ["다운로드", "보기", "뷰어보기", "Download"]
+                
+                if dedup_key not in attachments_dict:
                     attachments_dict[dedup_key] = {
                         "file_name": file_name if file_name else "attachment",
                         "download_url": download_url,
                         "extracted_text": None
                     }
+                else:
+                    # 기존 이름이 일반적인 명칭이고 신규 이름이 구체적이라면 업데이트
+                    current_name = attachments_dict[dedup_key]['file_name']
+                    current_is_generic = current_name in ["다운로드", "보기", "뷰어보기", "Download"]
+                    if current_is_generic and not is_generic:
+                        attachments_dict[dedup_key]['file_name'] = file_name
+                    elif not current_name.lower().endswith(('.hwp', '.pdf', '.hwpx', '.docx')) and has_ext:
+                        attachments_dict[dedup_key]['file_name'] = file_name
         
         attachments = list(attachments_dict.values())
         
