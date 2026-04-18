@@ -54,7 +54,6 @@ class MbcCrawler(BaseCrawler):
                     date=raw_date,
                     content=detail_data['content'],
                     url=detail_url,
-                    company=self.company,
                     image_urls=detail_data.get('images', []),
                     attachments=detail_data.get('attachments', [])
                 )

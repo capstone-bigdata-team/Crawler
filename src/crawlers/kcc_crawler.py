@@ -65,7 +65,8 @@ class KccCrawler(BaseCrawler):
                     attachments=detail_data.get('attachments', []),
                     attachment_text=attachment_text,
                     department=detail_data.get('department'),
-                    author=detail_data.get('author')
+                    author=detail_data.get('author'),
+                    image_urls=detail_data.get('image_urls', [])
                 )
                 
                 results.append(unified_data)
@@ -163,9 +164,20 @@ class KccCrawler(BaseCrawler):
                 val_elem = label.find_next_sibling(['td', 'dd', 'span'])
                 if val_elem: author = val_elem.get_text(strip=True)
         
+        # 이미지 추출 (본문 내 이미지)
+        image_urls = []
+        if content_elem:
+            for img in content_elem.select('img'):
+                img_src = img.get('src')
+                if img_src:
+                    full_image_url = urllib.parse.urljoin(url, img_src)
+                    if full_image_url not in image_urls:
+                        image_urls.append(full_image_url)
+        
         return {
             "content": content_elem,
             "attachments": attachments,
             "department": department,
-            "author": author
+            "author": author,
+            "image_urls": image_urls
         }

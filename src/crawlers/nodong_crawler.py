@@ -52,6 +52,10 @@ class NodongCrawler(BaseCrawler):
                 # 첨부파일 처리
                 attachment_text = self.process_attachments(detail_data.get('attachments', [])) if detail_data else None
 
+                # 기사 본문 이미지 추가
+                if detail_data and detail_data.get('image_urls'):
+                    image_urls.extend([url for url in detail_data['image_urls'] if url not in image_urls])
+
                 unified_data = self.make_unified_data(
                     title=title,
                     date=raw_date,
@@ -87,7 +91,18 @@ class NodongCrawler(BaseCrawler):
         # 언론노조는 보통 성명서 본문에 텍스트가 위주이며 첨부파일은 드묾
         attachments = []
         
+        # 이미지 추출 (본문 내 이미지)
+        image_urls = []
+        if content_elem:
+            for img in content_elem.select('img'):
+                img_src = img.get('src')
+                if img_src:
+                    full_image_url = urllib.parse.urljoin(url, img_src)
+                    if full_image_url not in image_urls:
+                        image_urls.append(full_image_url)
+        
         return {
             "content": content_elem,
-            "attachments": attachments
+            "attachments": attachments,
+            "image_urls": image_urls
         }

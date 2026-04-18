@@ -82,7 +82,7 @@ class BaseCrawler:
 
     def make_unified_data(self, title, date, content, url, attachments=None, attachment_text=None, 
                           department=None, author=None, summary=None, image_urls=None, 
-                          hashtags=None, references=None, company=None):
+                          hashtags=None, references=None):
         """JSON v1 규격에 맞게 데이터 구조화"""
         formatted_date = self.format_date(date)
         
@@ -96,7 +96,6 @@ class BaseCrawler:
         return {
             "doc_id": doc_id,
             "source": self.source_name,
-            "company": company,
             "department": department,
             "author": author,
             "title": title.strip() if title else None,

@@ -43,7 +43,6 @@ class NspCrawler(BaseCrawler):
                 control_no = item.get('latestTrendControlNo')
                 title = item.get('title')
                 publish_date = item.get('publishDt')
-                company = item.get('publisher') # 발행 기관
                 
                 if not control_no:
                     continue
@@ -65,12 +64,12 @@ class NspCrawler(BaseCrawler):
                     date=publish_date,
                     content=detail_data['content'] if detail_data else None,
                     url=detail_url,
-                    company=company,
                     summary=hashtags_str if hashtags_str else None,
                     hashtags=hashtag_list,
                     references=[],
                     attachments=detail_data.get('attachments', []) if detail_data else [],
-                    attachment_text=attachment_text
+                    attachment_text=attachment_text,
+                    image_urls=detail_data.get('image_urls', []) if detail_data else []
                 )
 
                 results.append(unified_data)
@@ -119,7 +118,18 @@ class NspCrawler(BaseCrawler):
                     "extracted_text": None
                 })
         
+        # 이미지 추출 (본문 내 이미지)
+        image_urls = []
+        if content_elem:
+            for img in content_elem.select('img'):
+                img_src = img.get('src')
+                if img_src:
+                    full_image_url = urllib.parse.urljoin(url, img_src)
+                    if full_image_url not in image_urls:
+                        image_urls.append(full_image_url)
+        
         return {
             "content": content_elem,
-            "attachments": attachments
+            "attachments": attachments,
+            "image_urls": image_urls
         }
