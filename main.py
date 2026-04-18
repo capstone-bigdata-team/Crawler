@@ -21,7 +21,7 @@ def run_all_crawlers():
     for crawler in crawlers:
         try:
             logger.info(f"--- Starting {crawler.__class__.__name__} ---")
-            results = crawler.crawl(limit=5) # 5개씩 수집
+            results = crawler.crawl(limit=25) # 25개씩 수집 (총 100개 목표)
             all_results.extend(results)
             logger.info(f"Collected {len(results)} items from {crawler.source_name}")
         except Exception as e:
@@ -29,7 +29,7 @@ def run_all_crawlers():
             
     return all_results
 
-def save_results(results, filename="sampledata/crawled_data.json"):
+def save_results(results, filename="data/crawled_data.json"):
     import os
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     

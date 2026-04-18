@@ -10,13 +10,13 @@ class NspCrawler(BaseCrawler):
         self.api_url = "https://nsp.nanet.go.kr/search/searchInnerList.do"
         self.detail_base_url = "https://nsp.nanet.go.kr/trend/latest/detail.do"
 
-    def crawl(self, limit=10):
-        self.logger.info(f"Starting crawl for {self.source_name}")
+    def crawl(self, limit=25):
+        self.logger.info(f"Starting crawl for {self.source_name} (Goal: {limit})")
         
         payload = {
             "collection": "trend",
             "query": "",
-            "listCount": str(limit),
+            "listCount": str(limit + 5), # 필터링 대비 약간 넉넉히
             "startCount": 0
         }
         
@@ -38,42 +38,49 @@ class NspCrawler(BaseCrawler):
             return []
         
         results = []
-        for item in items[:limit]:
-            try:
-                control_no = item.get('latestTrendControlNo')
-                title = item.get('title')
-                publish_date = item.get('publishDt')
+        seen_ids = set() # 중복 방지용 고유 번호 (idxno 역할)
+        
+        for item in items:
+            if len(results) >= limit:
+                break
                 
-                if not control_no:
+            try:
+                # 고유 번호 추출
+                control_no = item.get('latestTrendControlNo')
+                if not control_no or control_no in seen_ids:
                     continue
                 
+                title = item.get('title')
+                publish_date = item.get('publishDt')
                 detail_url = f"{self.detail_base_url}?latestTrendControlNo={control_no}&listChk=list"
                 
-                # 상세 페이지 파싱 (NSP는 CSR성향이 있지만 상세는 SSR인 경우가 많음)
+                # 상세 페이지로 이동하여 크롤링
                 detail_data = self.parse_detail(detail_url)
+                if not detail_data:
+                    continue
                 
-                # NSP 특화: 해시태그 수집 (summary 필드 등에 활용 가능)
+                # 해시태그 수집
                 hashtags_str = item.get('hashtag', '')
                 hashtag_list = [t.strip() for t in hashtags_str.split(',') if t.strip()] if hashtags_str else []
                 
-                # 첨부파일 텍스트 추출 (주로 PDF)
-                attachment_text = self.process_attachments(detail_data.get('attachments', [])) if detail_data else None
+                # 첨부파일 텍스트 추출
+                attachment_text = self.process_attachments(detail_data.get('attachments', []))
                 
                 unified_data = self.make_unified_data(
                     title=title,
                     date=publish_date,
-                    content=detail_data['content'] if detail_data else None,
+                    content=detail_data['content'],
                     url=detail_url,
                     summary=hashtags_str if hashtags_str else None,
                     hashtags=hashtag_list,
-                    references=[],
-                    attachments=detail_data.get('attachments', []) if detail_data else [],
+                    attachments=detail_data.get('attachments', []),
                     attachment_text=attachment_text,
-                    image_urls=detail_data.get('image_urls', []) if detail_data else []
+                    image_urls=detail_data.get('image_urls', [])
                 )
 
                 results.append(unified_data)
-                self.logger.info(f"Successfully crawled: {title}")
+                seen_ids.add(control_no)
+                self.logger.info(f"[{len(results)}/{limit}] Successfully crawled: {title}")
                 
             except Exception as e:
                 self.logger.error(f"Error processing item: {e}")
@@ -88,49 +95,43 @@ class NspCrawler(BaseCrawler):
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 상세 본문 추출 (네이버 블로그 스타일의 에디터 사용 시 .se-contents)
+        # 상세 본문 추출
         content_elem = soup.select_one('.post_cont_area_editor') or soup.select_one('.se-viewer')
-        
         if not content_elem:
-            content_elem = soup.select_one('.contents') or soup.find('div', class_='view_cont')
+            content_elem = soup.select_one('.contents') or soup.select_one('.view_cont')
+            
+        content_text = ""
+        image_urls = []
+        
+        if content_elem:
+            # 텍스트 추출
+            content_text = content_elem.get_text(separator='\n', strip=True)
+            # 이미지 추출
+            for img in content_elem.select('img'):
+                img_src = img.get('src') or img.get('data-src')
+                if img_src:
+                    image_urls.append(self.normalize_url(img_src, url))
 
-        # 첨부파일 (NSP 상세 페이지 하단에 다운로드 버튼 등 존재)
+        # 첨부파일 추출
         attachments = []
-        # NSP는 보통 PDF 다운로드 링크가 명시적임, 또는 '참고자료' 섹션에 존재
-        file_links = soup.select('a[href*="fileDownload"], a[href*=".pdf"], a[href*="AttachFileDown"], ul.ref_list_area a.data')
+        file_links = soup.select('a[href*="fileDownload"], a[href*=".pdf"], ul.ref_list_area a.data')
         
-        # 중복 방지를 위한 셋(Set)
-        seen_urls = set()
-        
+        seen_file_urls = set()
         for link in file_links:
             href = link.get('href', '')
             if href:
                 full_url = self.normalize_url(href, url)
-                if full_url in seen_urls:
+                if full_url in seen_file_urls:
                     continue
-                seen_urls.add(full_url)
+                seen_file_urls.add(full_url)
                 
-                name = link.get_text(strip=True) or "Download"
-                # 외부 링크인지 내부 다운로드인지 판별하여 이름 보강 (필요 시)
                 attachments.append({
-                    "file_name": name,
-                    "download_url": full_url,
-                    "extracted_text": None
+                    "file_name": link.get_text(strip=True) or "Download",
+                    "download_url": full_url
                 })
         
-        # 이미지 추출 (본문 내 이미지)
-        image_urls = []
-        if content_elem:
-            for img in content_elem.select('img'):
-                # src 외에도 data-src 등 지연 로딩 속성 체크
-                img_src = img.get('src') or img.get('data-src') or img.get('original-src')
-                if img_src:
-                    full_image_url = self.normalize_url(img_src, url)
-                    if full_image_url not in image_urls:
-                        image_urls.append(full_image_url)
-        
         return {
-            "content": content_elem,
+            "content": content_text,
             "attachments": attachments,
             "image_urls": image_urls
         }

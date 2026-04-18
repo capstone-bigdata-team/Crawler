@@ -13,21 +13,21 @@ class MbcCrawler(BaseCrawler):
         self.domain = "https://with.mbc.co.kr"
 
     def crawl(self, limit=1):
-        self.logger.info(f"Starting crawl for {self.company} via API")
+        self.logger.info(f"Starting crawl for {self.company} via API (Target: {limit})")
         
         params = {
             "callback": "jQuery",
             "opt": "0",
             "keyword": "",
             "page": "1",
-            "size": str(limit)
+            "size": str(limit + 5) # 필터링을 고려하여 조금 더 넉넉히 요청
         }
         
         response = self.fetch_url(self.list_api_url, params=params)
         if not response:
             return []
 
-        # JSONP 응답 처리 (jQuery(...); 또는 MBCInfoUtil...(...); 제거)
+        # JSONP 응답 처리
         json_str = re.sub(r'^[a-zA-Z0-9_.]+\(|\);?\s*$', '', response.text.strip())
         try:
             data = json.loads(json_str)
@@ -37,9 +37,17 @@ class MbcCrawler(BaseCrawler):
             return []
         
         results = []
-        for item in items[:limit]:
+        seen_codes = set() # 중복 방지용 고유 코드 집합
+        
+        for item in items:
+            if len(results) >= limit:
+                break
+                
             try:
                 code = item.get('code')
+                if not code or code in seen_codes:
+                    continue
+                    
                 title = item.get('title')
                 raw_date = item.get('reg_dt_full') or item.get('reg_dt')
                 detail_url = f"{self.domain}/pr/press/view.html?idx={code}"
@@ -59,7 +67,8 @@ class MbcCrawler(BaseCrawler):
                 )
                 
                 results.append(unified_data)
-                self.logger.info(f"Successfully crawled: {title}")
+                seen_codes.add(code)
+                self.logger.info(f"[{len(results)}/{limit}] Successfully crawled: {title}")
                 
             except Exception as e:
                 self.logger.error(f"Error processing MBC item: {e}")

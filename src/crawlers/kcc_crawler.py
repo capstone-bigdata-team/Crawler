@@ -10,23 +10,29 @@ class KccCrawler(BaseCrawler):
         self.domain = "https://www.kcc.go.kr"
 
     def crawl(self, limit=10):
-        self.logger.info(f"Starting crawl for {self.source_name}")
-        response = self.fetch_url(self.base_url)
+        self.logger.info(f"Starting crawl for {self.source_name} (Target: {limit})")
+        # 한 페이지에 더 많은 게시물을 노출시키기 위해 nop=50 추가
+        list_url = f"{self.base_url}&nop=50"
+        response = self.fetch_url(list_url)
         if not response:
             return []
-
+ 
         soup = BeautifulSoup(response.text, 'html.parser')
-        # 방통위 목록 테이블 행 추출
         rows = soup.select('table tbody tr')
         
         results = []
-        for row in rows[:limit]:
+        seen_urls = set() # 중복 제거용
+        
+        for row in rows:
+            if len(results) >= limit:
+                break
+                
             try:
-                # 공지사항 등 번호가 없는 행 제외 (보통 '공지'라고 써있거나 비어있음)
+                # 공지사항 등 번호가 없는 행 제외
                 num_elem = row.select_one('td:nth-child(1)')
                 if num_elem and '공지' in num_elem.get_text():
                     continue
-
+ 
                 title_elem = row.select_one('td:nth-child(2) a')
                 date_elem = row.select_one('td:nth-child(6)')
                 
@@ -36,25 +42,27 @@ class KccCrawler(BaseCrawler):
                 title = title_elem.get_text(strip=True)
                 raw_date = date_elem.get_text(strip=True)
                 
-                # 상세 페이지 링크 추출 (onclick 속성에서 seq 추출하는 경우도 있음)
+                # 상세 페이지 URL 결정
                 onclick = title_elem.get('onclick', '')
-                detail_url = self.base_url # 기본값
+                detail_url = self.base_url
                 
                 match = re.search(r"viewBoard\('(\d+)',", onclick)
                 if match:
                     seq = match.group(1)
-                    # KCC 상세 페이지 URL 구조 맞춤 (예시 seq를 활용한 파라미터 조합)
                     detail_url = f"{self.domain}/user.do?boardId=1113&page=A05030000&boardSeq={seq}&boardMode=view"
                 else:
                     href = title_elem.get('href', '')
                     detail_url = self.normalize_url(href, self.base_url)
 
+                # 중복 체크
+                if detail_url in seen_urls:
+                    continue
+ 
                 # 상세 페이지 파싱
                 detail_data = self.parse_detail(detail_url)
                 if not detail_data:
                     continue
                 
-                # 상세 데이터 기반으로 첨부파일 텍스트 추출 (가장 적적한 파일 하나 선택)
                 attachment_text = self.process_attachments(detail_data.get('attachments', []))
                 
                 unified_data = self.make_unified_data(
@@ -70,7 +78,8 @@ class KccCrawler(BaseCrawler):
                 )
                 
                 results.append(unified_data)
-                self.logger.info(f"Successfully crawled: {title}")
+                seen_urls.add(detail_url)
+                self.logger.info(f"[{len(results)}/{limit}] Successfully crawled: {title}")
                 
             except Exception as e:
                 self.logger.error(f"Error parsing row: {e}")
