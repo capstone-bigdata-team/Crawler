@@ -11,6 +11,11 @@ class KccCrawler(BaseCrawler):
 
     def crawl(self, limit=10):
         self.logger.info(f"Starting crawl for {self.source_name} (Target: {limit})")
+        
+        # 마지막 수집한 ID 불러오기
+        last_id = self.get_last_id()
+        if last_id:
+            self.logger.info(f"기존 마지막 수집 ID: {last_id}")
         # 한 페이지에 더 많은 게시물을 노출시키기 위해 nop=50 추가
         list_url = f"{self.base_url}&nop=50"
         response = self.fetch_url(list_url)
@@ -22,8 +27,9 @@ class KccCrawler(BaseCrawler):
         
         results = []
         seen_urls = set() # 중복 제거용
+        newest_id_candidate = None
         
-        for row in rows:
+        for i, row in enumerate(rows):
             if len(results) >= limit:
                 break
                 
@@ -43,16 +49,24 @@ class KccCrawler(BaseCrawler):
                 raw_date = date_elem.get_text(strip=True)
                 
                 # 상세 페이지 URL 결정
-                onclick = title_elem.get('onclick', '')
-                detail_url = self.base_url
+                href = title_elem.get('href', '')
+                detail_url = self.normalize_url(href, self.domain)
                 
-                match = re.search(r"viewBoard\('(\d+)',", onclick)
-                if match:
-                    seq = match.group(1)
-                    detail_url = f"{self.domain}/user.do?boardId=1113&page=A05030000&boardSeq={seq}&boardMode=view"
+                # [델타 크롤링] href에서 boardSeq 추출 및 중복 체크
+                seq_match = re.search(r"boardSeq=(\d+)", href)
+                if seq_match:
+                    seq = seq_match.group(1)
+                    
+                    # 마지막으로 수집했던 ID를 만나면 즉시 중단
+                    if last_id and str(seq) == str(last_id):
+                        self.logger.info(f"마지막 수집 지점({last_id})에 도달했습니다. 크롤링을 종료합니다.")
+                        break
+                    
+                    # 이번 실행에서 가장 최신 ID 저장 (첫 번째 유효한 게시물)
+                    if newest_id_candidate is None:
+                        newest_id_candidate = seq
                 else:
-                    href = title_elem.get('href', '')
-                    detail_url = self.normalize_url(href, self.base_url)
+                    self.logger.warning(f"Could not extract boardSeq from href: {href}")
 
                 # 중복 체크
                 if detail_url in seen_urls:
@@ -85,6 +99,10 @@ class KccCrawler(BaseCrawler):
                 self.logger.error(f"Error parsing row: {e}")
                 continue
                 
+        # 수집된 데이터가 있다면 마지막 수집 ID 업데이트
+        if newest_id_candidate:
+            self.update_last_id(newest_id_candidate)
+            
         return results
 
     def parse_detail(self, url):

@@ -13,6 +13,11 @@ class NspCrawler(BaseCrawler):
     def crawl(self, limit=25):
         self.logger.info(f"Starting crawl for {self.source_name} (Goal: {limit})")
         
+        # 마지막 수집한 ID 불러오기
+        last_id = self.get_last_id()
+        if last_id:
+            self.logger.info(f"기존 마지막 수집 ID: {last_id}")
+        
         payload = {
             "collection": "trend",
             "query": "",
@@ -39,14 +44,25 @@ class NspCrawler(BaseCrawler):
         
         results = []
         seen_ids = set() # 중복 방지용 고유 번호 (idxno 역할)
+        newest_id_candidate = None
         
-        for item in items:
+        for i, item in enumerate(items):
             if len(results) >= limit:
                 break
                 
             try:
                 # 고유 번호 추출
                 control_no = item.get('latestTrendControlNo')
+                
+                # [델타 크롤링] 마지막으로 수집했던 ID를 만나면 즉시 중단
+                if last_id and str(control_no) == str(last_id):
+                    self.logger.info(f"마지막 수집 지점({last_id})에 도달했습니다. 크롤링을 종료합니다.")
+                    break
+                
+                # 이번 실행에서 가장 최신 ID 저장 (목록의 첫 번째 아이템)
+                if i == 0:
+                    newest_id_candidate = control_no
+
                 if not control_no or control_no in seen_ids:
                     continue
                 
@@ -86,6 +102,10 @@ class NspCrawler(BaseCrawler):
                 self.logger.error(f"Error processing item: {e}")
                 continue
                 
+        # 수집된 데이터가 있다면 마지막 수집 ID 업데이트
+        if newest_id_candidate:
+            self.update_last_id(newest_id_candidate)
+            
         return results
 
     def parse_detail(self, url):

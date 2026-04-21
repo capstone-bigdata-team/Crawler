@@ -4,10 +4,13 @@ import json
 import hashlib
 import urllib.parse
 import requests
+import time
+import random
 from bs4 import BeautifulSoup
 from datetime import datetime
 from src.utils.logger import get_logger
 from src.utils.file_extractor import FileExtractor
+from src.utils.state_manager import StateManager
 
 class BaseCrawler:
     def __init__(self, source_name):
@@ -18,6 +21,32 @@ class BaseCrawler:
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         })
         self.extractor = FileExtractor()
+        
+        # 차단 방지를 위한 User-Agent 목록
+        self.user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1"
+        ]
+
+    def _get_random_user_agent(self):
+        """임의의 User-Agent를 반환합니다."""
+        return random.choice(self.user_agents)
+
+    def random_delay(self, min_sec=1.0, max_sec=3.0):
+        """사이트 차단 방지를 위해 랜덤하게 대기합니다."""
+        wait_time = random.uniform(min_sec, max_sec)
+        time.sleep(wait_time)
+
+    def get_last_id(self):
+        """이 크롤러의 마지막 수집 ID를 가져옵니다."""
+        return StateManager.get_last_id(self.source_name)
+
+    def update_last_id(self, last_id):
+        """이 크롤러의 마지막 수집 ID를 업데이트합니다."""
+        StateManager.update_last_id(self.source_name, last_id)
 
     def normalize_url(self, url, base_url):
         """URL을 절대 경로로 변환하고 // 시작 주소 등을 처리"""
@@ -120,8 +149,17 @@ class BaseCrawler:
             "crawled_at": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
         }
 
-    def fetch_url(self, url, method="GET", **kwargs):
-        """공통 HTTP 요청 함수"""
+    def fetch_url(self, url, method="GET", use_delay=True, **kwargs):
+        """공통 HTTP 요청 함수 (차단 방지 로직 포함)"""
+        if use_delay:
+            self.random_delay()
+            
+        # 요청마다 다른 User-Agent 설정
+        headers = kwargs.get("headers", {})
+        if "User-Agent" not in headers:
+            headers["User-Agent"] = self._get_random_user_agent()
+            kwargs["headers"] = headers
+
         try:
             response = self.session.request(method, url, timeout=15, **kwargs)
             response.raise_for_status()

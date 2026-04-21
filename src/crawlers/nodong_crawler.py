@@ -13,12 +13,19 @@ class NodongCrawler(BaseCrawler):
     def crawl(self, limit=25):
         self.logger.info(f"Starting crawl for {self.source_name} (Goal: {limit})")
         
+        # 마지막 수집한 ID 불러오기
+        last_id = self.get_last_id()
+        if last_id:
+            self.logger.info(f"기존 마지막 수집 ID: {last_id}")
+            
         results = []
         seen_urls = set()
         page = 1
+        newest_id_candidate = None
+        stop_entire_crawl = False
         
         # 목록에서 순차적으로 기사 수집
-        while len(results) < limit:
+        while len(results) < limit and not stop_entire_crawl:
             # total 파라미터가 문제를 일으킬 수 있으므로 page와 필수 필터만 우선 사용
             # 사용자 예시: /news/articleList.html?page=3&total=1426&box_idxno=&sc_sub_section_code=S2N14&view_type=sm
             params = {
@@ -44,7 +51,7 @@ class NodongCrawler(BaseCrawler):
                 break
                 
             found_on_page = 0
-            for item in items:
+            for i, item in enumerate(items):
                 if len(results) >= limit:
                     break
                     
@@ -57,6 +64,19 @@ class NodongCrawler(BaseCrawler):
                     title = title_elem.get_text(strip=True)
                     relative_url = title_elem.get('href')
                     detail_url = self.normalize_url(relative_url, self.domain)
+                    
+                    # [델타 크롤링] idxno 추출 및 중복 체크
+                    idxno_match = re.search(r"idxno=(\d+)", relative_url or "")
+                    idxno = idxno_match.group(1) if idxno_match else detail_url
+                    
+                    if last_id and str(idxno) == str(last_id):
+                        self.logger.info(f"마지막 수집 지점({last_id})에 도달했습니다. 페이징을 중단합니다.")
+                        stop_entire_crawl = True
+                        break
+                    
+                    # 이번 실행에서 가장 최신 ID 저장 (1페이지의 첫 번째 아이템)
+                    if page == 1 and newest_id_candidate is None:
+                        newest_id_candidate = idxno
                     
                     # 중복 체크
                     if detail_url in seen_urls:
@@ -113,6 +133,10 @@ class NodongCrawler(BaseCrawler):
             if page > 30: # 최대 30페이지 정도만 탐색
                 break
                 
+        # 수집된 데이터가 있다면 마지막 수집 ID 업데이트
+        if newest_id_candidate:
+            self.update_last_id(newest_id_candidate)
+            
         return results
 
     def parse_detail(self, url):

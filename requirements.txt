@@ -4,3 +4,4 @@ lxml
 olefile
 pymupdf
 python-docx
+apscheduler

@@ -15,6 +15,11 @@ class MbcCrawler(BaseCrawler):
     def crawl(self, limit=1):
         self.logger.info(f"Starting crawl for {self.company} via API (Target: {limit})")
         
+        # 마지막 수집한 ID 불러오기
+        last_id = self.get_last_id()
+        if last_id:
+            self.logger.info(f"기존 마지막 수집 ID: {last_id}")
+        
         params = {
             "callback": "jQuery",
             "opt": "0",
@@ -38,13 +43,24 @@ class MbcCrawler(BaseCrawler):
         
         results = []
         seen_codes = set() # 중복 방지용 고유 코드 집합
+        newest_id_candidate = None
         
-        for item in items:
+        for i, item in enumerate(items):
             if len(results) >= limit:
                 break
                 
             try:
                 code = item.get('code')
+                
+                # [델타 크롤링] 마지막으로 수집했던 ID를 만나면 즉시 중단
+                if last_id and str(code) == str(last_id):
+                    self.logger.info(f"마지막 수집 지점({last_id})에 도달했습니다. 크롤링을 종료합니다.")
+                    break
+                
+                # 이번 실행에서 가장 최신 ID 저장 (목록의 첫 번째 아이템)
+                if i == 0:
+                    newest_id_candidate = code
+
                 if not code or code in seen_codes:
                     continue
                     
@@ -74,6 +90,10 @@ class MbcCrawler(BaseCrawler):
                 self.logger.error(f"Error processing MBC item: {e}")
                 continue
                 
+        # 수집된 데이터가 있다면 마지막 수집 ID 업데이트
+        if newest_id_candidate:
+            self.update_last_id(newest_id_candidate)
+            
         return results
 
     def parse_detail(self, code):
